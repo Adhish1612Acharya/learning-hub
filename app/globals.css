@@ -1,0 +1,91 @@
+@import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/inter/800.css";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #e6e6e1;
+  --ink: #16171b;
+  --muted: #5d6270;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0d12;
+    --surface: #12151c;
+    --border: #232733;
+    --ink: #eef0f4;
+    --muted: #9aa1b2;
+    color-scheme: dark;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+mark {
+  background: color-mix(in srgb, var(--accent, #34d399) 30%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.slide-frame:fullscreen {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.slide-frame:fullscreen .slide-stage {
+  width: min(100vw, calc((100vh - 48px) * 16 / 9));
+  margin: 0 auto;
+}
+
+/* Rendered markdown from the "In my words" section. */
+.note-body h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 1.75rem 0 0.5rem;
+}
+.note-body h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 1.25rem 0 0.4rem;
+}
+.note-body p,
+.note-body ul,
+.note-body ol {
+  margin: 0.6rem 0;
+  line-height: 1.75;
+  color: color-mix(in srgb, var(--ink) 88%, transparent);
+}
+.note-body ul {
+  list-style: disc;
+  padding-left: 1.4rem;
+}
+.note-body ol {
+  list-style: decimal;
+  padding-left: 1.4rem;
+}
+.note-body blockquote {
+  border-left: 3px solid var(--accent, #34d399);
+  padding-left: 1rem;
+  font-style: italic;
+  color: var(--muted);
+}
+.note-body strong {
+  font-weight: 700;
+}
+.note-body a {
+  text-decoration: underline;
+}

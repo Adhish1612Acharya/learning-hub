@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.DS_Store
+# generated at build time by scripts/build-index.mjs
+public/search-index.json
+public/pdf.worker.min.mjs
