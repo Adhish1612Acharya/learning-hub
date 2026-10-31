@@ -5,7 +5,7 @@ import { asset } from "@/lib/site";
 
 // Renders a PDF deck with pdf.js so it works the same on every browser,
 // including mobile ones that can't show PDFs inline. Opens on #slide=N.
-export default function SlideViewer({ pdf, title }: { pdf: string; title: string }) {
+export default function SlideViewer({ pdf, pptx, title }: { pdf: string; pptx?: string | null; title: string }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const docRef = useRef<any>(null);
@@ -116,8 +116,13 @@ export default function SlideViewer({ pdf, title }: { pdf: string; title: string
             Full screen
           </button>
           <a href={asset(pdf)} download className="rounded-md px-2.5 py-1 hover:bg-white/10">
-            Download
+            PDF
           </a>
+          {pptx && (
+            <a href={asset(pptx)} download className="rounded-md px-2.5 py-1 hover:bg-white/10">
+              PPTX
+            </a>
+          )}
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@
 
 My personal record of what I learn from books — finance, startups, self-help and more.
 Every learning is written in my own words, structured into concepts, takeaways and actions,
-and turned into a slide deck (PDF).
+and turned into a pitch-deck style slide deck (PowerPoint + PDF).
 
 - **Search** across all notes *and* the text inside every slide PDF. Fuzzy matching finds the
   closest matches even with typos, ranked best first, with highlighted snippets. Slide hits open
@@ -14,7 +14,7 @@ and turned into a slide deck (PDF).
 ## Adding a learning
 
 Explain what I learned to Claude Code in this repo. It asks for the book, writes
-`content/learnings/<date>-<slug>.md`, generates `public/slides/<slug>.pdf`, and pushes.
+`content/learnings/<date>-<slug>.md`, generates `public/slides/<slug>.pptx` and its PDF, and pushes.
 See [CLAUDE.md](CLAUDE.md) for the full workflow and `content/learnings/_template.md` for the format.
 
 ## Commands
@@ -22,7 +22,8 @@ See [CLAUDE.md](CLAUDE.md) for the full workflow and `content/learnings/_templat
 ```bash
 npm install
 npm run dev                         # http://localhost:3000
-npm run slides -- <slug>            # (re)generate a deck; needs Playwright + Chromium
+npm run slides -- <slug>            # (re)generate PPTX + PDF; needs LibreOffice
+npm run pdf -- deck.pptx            # convert any PPTX to PDF
 npm run ask -- "how to save money"  # search from the terminal
 npm run build                       # static site in out/
 ```

@@ -24,11 +24,14 @@ The owner explains a learning in their own words. Turn it into a structured entr
    - Don't invent facts about the book. If something they said seems off, keep their version and ask.
    - `**bold**` and `*italic*` work inside frontmatter strings (slides and the page).
    - One file per distinct learning. Several learnings from one explanation → several files, same `book`.
-3. **Generate the deck**: `npm run slides -- <slug>` → `public/slides/<slug>.pdf`.
-   Check it visually: `pdftoppm -r 40 -png public/slides/<slug>.pdf <scratch>/s` and view the images.
-   Long text auto-shrinks; if a slide still looks crowded, shorten that field.
+3. **Generate the deck**: `npm run slides -- <slug>` builds a pitch-deck style PowerPoint
+   (`public/slides/<slug>.pptx`, pptxgenjs) and converts it to `public/slides/<slug>.pdf` with LibreOffice.
+   Follow the pptx skill's QA: `validate.py` on the .pptx, then render the PDF
+   (`pdftoppm -jpeg -r 50 public/slides/<slug>.pdf <dir>/s`) and look at every slide for overflow/overlap.
+   Text sizes are fitted to their boxes; if a slide still looks crowded, shorten that field.
+   Give each concept an `icon` that matches its meaning (names in `_template.md`).
 4. **Verify**: `npm run build` must pass.
-5. **Commit and push** (note + PDF together) on the working branch.
+5. **Commit and push** (note + PPTX + PDF together) on the working branch.
 6. Reply with a short summary of how the learning was structured.
 
 ## 2. "What did I learn about X?" → answer from the hub
@@ -45,7 +48,8 @@ The owner explains a learning in their own words. Turn it into a structured entr
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Build the search index, start dev server |
-| `npm run slides` | Decks for learnings that are new or changed (`-- <slug>` for one, `-- --all` for all) |
+| `npm run slides` | PPTX + PDF decks for learnings that are new or changed (`-- <slug>` for one, `-- --all` for all) |
+| `npm run pdf -- deck.pptx` | Convert any PPTX to PDF with LibreOffice (`--outdir dir` optional) |
 | `npm run index` | Rebuild `public/search-index.json` (notes + every PDF in `public/slides`) |
 | `npm run ask -- "query"` | CLI search over the hub |
 | `npm run build` | Index + static export to `out/` |
@@ -53,11 +57,13 @@ The owner explains a learning in their own words. Turn it into a structured entr
 ## Layout
 
 - `content/learnings/*.md` — the learnings (files starting with `_` are ignored).
-- `public/slides/*.pdf` — generated decks, committed. Any other PDF dropped here is also indexed for search.
+- `public/slides/*.pptx|*.pdf` — generated decks, committed. Any other PDF dropped here is also indexed for search.
 - `lib/content.mjs` — loads/parses learnings (shared by the site and scripts).
 - `lib/search.mjs` — MiniSearch config, grouping and snippets (shared by the site and `npm run ask`).
 - `lib/themes.mjs` — category colour themes (site + slides).
-- `scripts/generate-slides.mjs` — Playwright/Chromium renders the deck HTML to PDF. Decorative backgrounds
-  are baked into JPEGs (pdf.js mis-renders Chromium's transparent gradients); text stays real and searchable.
+- `scripts/generate-slides.mjs` — builds the PPTX with pptxgenjs as a structured deck: theme colours per
+  category, layouts COVER / STATEMENT / CONTENT with placeholders, sections. Slides: cover, big idea,
+  ideas at a glance, one per concept, takeaways, action plan, quotes, recap. Icons come from react-icons (fa6).
+- `scripts/pptx-to-pdf.mjs` — LibreOffice headless conversion (set `SOFFICE` if the binary isn't on PATH).
 - `scripts/build-index.mjs` — builds the search index; drops repeated slide footers from PDF text.
 - `app/` — pages: `/` (search + filters), `/learnings/[slug]`, `/books`, `/books/[slug]`.

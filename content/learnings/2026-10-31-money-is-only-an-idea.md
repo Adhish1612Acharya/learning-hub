@@ -9,13 +9,17 @@ summary: "More money starts with changing how you think, backed by financial edu
 bigIdea: "Money is only an idea. **If you want more money, simply change your thinking.**"
 concepts:
   - title: "Money is an idea"
+    icon: idea
     explanation: "How much money you have follows from how you think about money. To get more of it, the first thing to change is your **thinking**, not just the hours you work."
   - title: "Financial education and wisdom"
+    icon: graduation
     explanation: "Education and wisdom about money are what really matter. They don't come by chance: you build them on purpose."
     example: "Start early, buy a book, go to a seminar, practise, and start small."
   - title: "Think and grow rich"
+    icon: brain
     explanation: "A new book I came across: *Think and Grow Rich*. The title says it all: it's not **work hard** and grow rich, it's **think** and grow rich."
   - title: "Play it smart, not safe"
+    icon: chess
     explanation: "Don't just play it safe. **Play it smart.** Avoiding every risk isn't the goal; making smart moves is."
 takeaways:
   - "Money is only an idea: more money starts with different thinking"

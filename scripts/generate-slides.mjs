@@ -1,263 +1,386 @@
-// Renders a 16:9 PDF slide deck for each learning into public/slides/<slug>.pdf
+// Builds a pitch-deck style PowerPoint for each learning with pptxgenjs, then
+// converts it to PDF with LibreOffice (scripts/pptx-to-pdf.mjs). Both land in
+// public/slides/<slug>.pptx|.pdf; the PDF feeds the site's viewer and search.
 //   npm run slides                 -> decks missing or older than their note
 //   npm run slides -- <slug> ...   -> just these learnings
 //   npm run slides -- --all        -> rebuild every deck
-// Needs Playwright + Chromium (preinstalled in Claude Code cloud sessions).
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { getLearnings, LEARNINGS_DIR, SLIDES_DIR, ROOT } from "../lib/content.mjs";
 import { themeFor } from "../lib/themes.mjs";
+import { pptxToPdf } from "./pptx-to-pdf.mjs";
 
 const require = createRequire(import.meta.url);
+const PptxGenJS = require("pptxgenjs");
+const JSZip = require(require.resolve("jszip", { paths: [require.resolve("pptxgenjs")] }));
+const React = require("react");
+const { renderToStaticMarkup } = require("react-dom/server");
+const sharp = require("sharp");
+const Fa = require("react-icons/fa6");
 
-function loadPlaywright() {
-  try {
-    return require("playwright");
-  } catch {
-    // Fall back to a globally installed copy.
-    const { execSync } = require("node:child_process");
-    const globalRoot = execSync("npm root -g").toString().trim();
-    for (const dir of [globalRoot, "/opt/node-tools/node_modules"]) {
-      try {
-        return require(path.join(dir, "playwright"));
-      } catch {}
-    }
-    throw new Error("Playwright not found. Install it with `npm i -g playwright && npx playwright install chromium`.");
+// ---------------------------------------------------------------- geometry
+const W = 13.333; // LAYOUT_WIDE
+const M = 0.75; // side margin
+const CW = W - 2 * M; // content width
+const TOP = 2.05; // content area starts below the title
+const BOTTOM = 6.65; // content area ends above the footer
+
+// ---------------------------------------------------------------- icons
+const ICONS = {
+  book: Fa.FaBookOpen, idea: Fa.FaLightbulb, lightbulb: Fa.FaLightbulb, brain: Fa.FaBrain,
+  graduation: Fa.FaGraduationCap, education: Fa.FaGraduationCap, chess: Fa.FaChessKnight,
+  money: Fa.FaSackDollar, coins: Fa.FaCoins, chart: Fa.FaChartLine, growth: Fa.FaArrowTrendUp,
+  shield: Fa.FaShieldHalved, rocket: Fa.FaRocket, target: Fa.FaBullseye, seedling: Fa.FaSeedling,
+  key: Fa.FaKey, compass: Fa.FaCompass, clock: Fa.FaClock, people: Fa.FaUsers, heart: Fa.FaHeart,
+  check: Fa.FaCheck, quote: Fa.FaQuoteLeft, flag: Fa.FaFlagCheckered, scale: Fa.FaScaleBalanced,
+  handshake: Fa.FaHandshake, briefcase: Fa.FaBriefcase, mountain: Fa.FaMountain,
+  puzzle: Fa.FaPuzzlePiece, fire: Fa.FaFire, list: Fa.FaListCheck, eye: Fa.FaEye,
+};
+const CATEGORY_ICON = { finance: "coins", startups: "rocket", "self-help": "seedling", psychology: "brain", productivity: "clock", business: "briefcase" };
+const CONCEPT_ICONS = ["idea", "key", "compass", "target", "puzzle", "flag"];
+
+const iconCache = new Map();
+async function icon(name, hex) {
+  const key = `${name}:${hex}`;
+  if (!iconCache.has(key)) {
+    const svg = renderToStaticMarkup(React.createElement(ICONS[name] || ICONS.idea, { color: `#${hex}`, size: 256 }));
+    const png = await sharp(Buffer.from(svg)).png().toBuffer();
+    iconCache.set(key, `image/png;base64,${png.toString("base64")}`);
   }
+  return iconCache.get(key);
 }
 
-const esc = (s) =>
-  String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-// Escape, then allow **bold** and *italic* for emphasis.
-const rich = (s) =>
-  esc(s)
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>");
+// Glowing dark background; pptx has no gradient fills, so it's an image.
+async function darkBackground(t, variant) {
+  const [gx, gy, ax, ay] = variant === "cover" ? [1500, 80, 120, 980] : [1450, 950, 150, 60];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900">
+    <defs>
+      <linearGradient id="base" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#${t.deep}"/><stop offset="0.8" stop-color="#07080C"/></linearGradient>
+      <radialGradient id="g1" cx="${gx}" cy="${gy}" r="900" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#${t.mid}" stop-opacity="0.75"/><stop offset="1" stop-color="#${t.mid}" stop-opacity="0"/></radialGradient>
+      <radialGradient id="g2" cx="${ax}" cy="${ay}" r="650" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#${t.accent}" stop-opacity="0.22"/><stop offset="1" stop-color="#${t.accent}" stop-opacity="0"/></radialGradient>
+    </defs>
+    <rect width="1600" height="900" fill="url(#base)"/><rect width="1600" height="900" fill="url(#g1)"/><rect width="1600" height="900" fill="url(#g2)"/>
+  </svg>`;
+  const jpg = await sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
+  return `image/jpeg;base64,${jpg.toString("base64")}`;
+}
+
+// ---------------------------------------------------------------- text helpers
+const plain = (s) => String(s).replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1");
+
+/** **bold** -> bold + emphasis colour, *italic* -> italic. Fresh option objects per run. */
+function runs(text, base = {}, emph = {}) {
+  return String(text)
+    .split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g)
+    .filter(Boolean)
+    .map((part) =>
+      part.startsWith("**")
+        ? { text: part.slice(2, -2), options: { ...base, bold: true, ...emph } }
+        : part.startsWith("*") && part.length > 2
+          ? { text: part.slice(1, -1), options: { ...base, italic: true } }
+          : { text: part, options: { ...base } },
+    );
+}
+
+/** Largest font size (pt) at which `text` wraps into a w x h box (inches). */
+function fit(text, w, h, max, min = 14, { bold = false, lineHeight = 1.2 } = {}) {
+  const words = (para) => plain(para).split(/\s+/).filter(Boolean);
+  for (let pt = max; pt > min; pt--) {
+    const perLine = Math.floor(w / ((pt / 72) * (bold ? 0.56 : 0.5)));
+    let lines = 0;
+    for (const para of String(text).split("\n")) {
+      let cur = 0;
+      lines++;
+      for (const word of words(para)) {
+        if (cur && cur + 1 + word.length > perLine) {
+          lines++;
+          cur = word.length;
+        } else cur += (cur ? 1 : 0) + word.length;
+      }
+    }
+    if (lines * (pt / 72) * lineHeight <= h) return pt;
+  }
+  return min;
+}
+
 // Split into the fewest groups of at most `max`, keeping group sizes even.
 const chunk = (arr, max) => {
+  if (!arr.length) return [];
   const n = Math.ceil(arr.length / Math.ceil(arr.length / max));
   return Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 };
 const pad = (n) => String(n).padStart(2, "0");
-const rgba = (hex, a) => {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
-};
+const hex = (c) => c.replace("#", "").toUpperCase();
+const shadow = () => ({ type: "outer", color: "000000", opacity: 0.1, blur: 10, offset: 2, angle: 90 });
 
-function fontFaces() {
-  const dir = path.join(ROOT, "node_modules", "@fontsource", "inter", "files");
-  return [400, 500, 600, 700, 800]
-    .map((w) => {
-      const file = path.join(dir, `inter-latin-${w}-normal.woff2`);
-      return fs.existsSync(file)
-        ? `@font-face{font-family:"Inter";font-weight:${w};src:url("${pathToFileURL(file)}") format("woff2");}`
-        : "";
-    })
-    .join("\n");
+// ---------------------------------------------------------------- theme
+function themeOf(l) {
+  const t = themeFor(l.categorySlug);
+  return {
+    name: `Learning Hub ${t.name}`,
+    headFontFace: "Arial",
+    bodyFontFace: "Calibri",
+    raw: { deep: hex(t.deep), mid: hex(t.mid), accent: hex(t.accent), soft: hex(t.soft) },
+    colors: {
+      dk1: "16181D", // body text on light slides
+      lt1: "FFFFFF",
+      dk2: hex(t.deep), // deep brand colour
+      lt2: "F3F5F7", // card fill on light slides
+      accent1: hex(t.mid), // main brand colour
+      accent2: hex(t.accent), // bright highlight (dark slides)
+      accent3: hex(t.soft), // soft tint
+      accent4: "5B6170", // muted captions on light
+      accent5: "A3ABBA", // muted captions on dark
+      accent6: "0B0D12",
+      hlink: hex(t.mid),
+      folHlink: hex(t.deep),
+    },
+  };
 }
 
-function slidesFor(l) {
-  const slides = [];
+/** pptxgenjs writes Office's palette; put the deck's own colours into the theme part. */
+async function applyTheme(file, theme) {
+  const zip = await JSZip.loadAsync(fs.readFileSync(file));
+  const part = "ppt/theme/theme1.xml";
+  const slots = ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"];
+  const name = theme.name.replace(/[&<>"]/g, "");
+  const scheme = `<a:clrScheme name="${name}">${slots.map((k) => `<a:${k}><a:srgbClr val="${theme.colors[k]}"/></a:${k}>`).join("")}</a:clrScheme>`;
+  const xml = (await zip.file(part).async("string"))
+    .replace(/<a:clrScheme\b[\s\S]*?<\/a:clrScheme>/, () => scheme)
+    .replace(/(<a:(?:theme|fontScheme)\b[^>]*?\bname=")[^"]*"/g, (_, head) => `${head}${name}"`);
+  zip.file(part, xml);
+  fs.writeFileSync(file, await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+}
 
-  slides.push(`
-    <section class="slide cover">
-      <div class="orb orb-a"></div><div class="orb orb-b"></div>
-      <div class="content">
-        <span class="pill">${esc(l.category)}</span>
-        <h1 class="fit">${rich(l.title)}</h1>
-        ${l.summary ? `<p class="lead">${rich(l.summary)}</p>` : ""}
-        <div class="book">
-          <div class="book-icon"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg></div>
-          <div><div class="book-title">${esc(l.book)}</div>${l.author ? `<div class="muted">by ${esc(l.author)}</div>` : ""}</div>
-        </div>
-      </div>
-    </section>`);
+// ---------------------------------------------------------------- layouts
+async function defineLayouts(pres, l, theme) {
+  const C = pres.SchemeColor;
+  const footer = `${l.book}${l.author ? ` · ${l.author}` : ""}`;
+  const footerOpts = (dark) => ({ x: M, y: 6.95, w: 8, h: 0.3, margin: 0, fontSize: 10, color: dark ? C.accent5 : C.accent4 });
+  const slideNumber = (dark) => ({ x: W - M - 1, y: 6.95, w: 1, h: 0.3, margin: 0, align: "right", fontSize: 10, color: dark ? theme.colors.accent5 : theme.colors.accent4 });
 
-  if (l.bigIdea) {
-    slides.push(`
-      <section class="slide big-idea">
-        <div class="orb orb-c"></div>
-        <div class="content">
-          <div class="eyebrow">The big idea</div>
-          <blockquote class="fit">${rich(l.bigIdea)}</blockquote>
-        </div>
-      </section>`);
+  pres.defineSlideMaster({
+    title: "COVER",
+    background: { data: await darkBackground(theme.raw, "cover") },
+    objects: [
+      { placeholder: { options: { name: "title", type: "title", x: M, y: 2.35, w: 7.9, h: 2.1, margin: 0, bold: true, color: C.background1, align: "left", valign: "bottom" }, text: "" } },
+      { placeholder: { options: { name: "subtitle", type: "body", x: M, y: 4.65, w: 7.2, h: 1.0, margin: 0, fontSize: 20, color: C.accent3, valign: "top" }, text: "" } },
+    ],
+  });
+  pres.defineSlideMaster({
+    title: "STATEMENT",
+    background: { data: await darkBackground(theme.raw, "statement") },
+    objects: [
+      { placeholder: { options: { name: "kicker", type: "body", x: M + 1.15, y: 1.55, w: 9, h: 0.4, margin: 0, fontSize: 14, bold: true, charSpacing: 1, color: C.accent2, valign: "middle" }, text: "" } },
+      { placeholder: { options: { name: "statement", type: "body", x: M, y: 2.35, w: 11.2, h: 3.9, margin: 0, bold: true, color: C.background1, valign: "top" }, text: "" } },
+      { text: { text: footer, options: footerOpts(true) } },
+    ],
+    slideNumber: slideNumber(true),
+  });
+  pres.defineSlideMaster({
+    title: "CONTENT",
+    background: { color: C.background1 },
+    objects: [
+      { placeholder: { options: { name: "kicker", type: "body", x: M, y: 0.55, w: CW, h: 0.32, margin: 0, fontSize: 13, bold: true, charSpacing: 1, color: C.accent1, valign: "top" }, text: "" } },
+      { placeholder: { options: { name: "title", type: "title", x: M, y: 0.9, w: CW, h: 0.85, margin: 0, fontSize: 34, bold: true, color: C.text1, align: "left", valign: "top" }, text: "" } },
+      { text: { text: footer, options: footerOpts(false) } },
+    ],
+    slideNumber: slideNumber(false),
+  });
+}
+
+// ---------------------------------------------------------------- slides
+async function buildDeck(l, file) {
+  const theme = themeOf(l);
+  const pres = new PptxGenJS();
+  pres.layout = "LAYOUT_WIDE";
+  pres.theme = { headFontFace: theme.headFontFace, bodyFontFace: theme.bodyFontFace };
+  pres.title = l.title;
+  pres.subject = `${l.book} — ${l.category}`;
+  pres.author = "Learning Hub";
+  const C = pres.SchemeColor;
+  const col = theme.colors;
+  await defineLayouts(pres, l, theme);
+
+  const iconCircle = async (slide, name, x, y, d, { fill = C.accent1, color = col.lt1, ratio = 0.5 } = {}) => {
+    slide.addShape(pres.shapes.OVAL, { x, y, w: d, h: d, fill: { color: fill }, line: { type: "none" }, objectName: `icon-bg-${name}` });
+    const s = d * ratio;
+    slide.addImage({ data: await icon(name, color), x: x + (d - s) / 2, y: y + (d - s) / 2, w: s, h: s, altText: name, objectName: `icon-${name}` });
+  };
+
+  // 1. Cover -----------------------------------------------------------
+  pres.addSection({ title: "Introduction" });
+  {
+    const s = pres.addSlide({ masterName: "COVER", sectionTitle: "Introduction" });
+    const cat = l.category.toUpperCase();
+    const pillW = Math.max(1.3, cat.length * 0.13 + 0.6);
+    s.addText(cat, {
+      shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.2, x: M, y: 1.65, w: pillW, h: 0.42, fill: { color: C.accent2 },
+      fontSize: 12, bold: true, charSpacing: 1, color: C.text2, align: "center", valign: "middle", margin: 0, objectName: "category",
+    });
+    s.addText(runs(l.title), { placeholder: "title", fontSize: fit(l.title, 7.9, 2.1, 54, 34, { bold: true, lineHeight: 1.1 }) });
+    if (l.summary) s.addText(runs(l.summary), { placeholder: "subtitle", fontSize: fit(l.summary, 7.2, 1.0, 20, 14) });
+    // Book card
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: M, y: 5.85, w: 5.6, h: 0.95, rectRadius: 0.12, fill: { color: C.background1, transparency: 90 }, line: { color: C.background1, transparency: 75, width: 0.75 }, objectName: "book-card" });
+    s.addImage({ data: await icon("book", col.accent2), x: M + 0.3, y: 6.1, w: 0.45, h: 0.45, altText: "Book", objectName: "book-icon" });
+    s.addText(
+      [
+        { text: l.book, options: { bold: true, fontSize: 16, color: C.background1, breakLine: !!l.author } },
+        ...(l.author ? [{ text: `by ${l.author}`, options: { fontSize: 13, color: C.accent5 } }] : []),
+      ],
+      { x: M + 0.95, y: 5.95, w: 4.5, h: 0.75, margin: 0, valign: "middle", isTextBox: true, objectName: "book-text" },
+    );
+    // Category emblem
+    s.addShape(pres.shapes.OVAL, { x: 9.0, y: 1.9, w: 3.6, h: 3.6, fill: { color: C.accent2, transparency: 85 }, line: { color: C.accent2, transparency: 60, width: 1 }, objectName: "emblem-ring" });
+    await iconCircle(s, CATEGORY_ICON[l.categorySlug] || "book", 9.75, 2.65, 2.1, { fill: C.accent2, color: col.dk2 });
+    s.addNotes(plain(l.body.replace(/^#+\s*/gm, "")));
   }
 
-  l.concepts.forEach((c, i) => {
-    slides.push(`
-      <section class="slide concept">
-        <div class="num">${pad(i + 1)}</div>
-        <div class="content">
-          <div class="eyebrow">Concept ${i + 1} of ${l.concepts.length}</div>
-          <h2>${rich(c.title)}</h2>
-          <div class="fit">
-            <p class="body">${rich(c.explanation)}</p>
-            ${c.example ? `<div class="example"><div class="example-label">In practice</div><p>${rich(c.example)}</p></div>` : ""}
-          </div>
-        </div>
-      </section>`);
-  });
+  // 2. Big idea --------------------------------------------------------
+  if (l.bigIdea) {
+    const s = pres.addSlide({ masterName: "STATEMENT", sectionTitle: "Introduction" });
+    await iconCircle(s, "idea", M, 1.4, 0.75, { fill: C.accent2, color: col.dk2 });
+    s.addText("THE BIG IDEA", { placeholder: "kicker" });
+    s.addText(runs(l.bigIdea, {}, { color: C.accent2 }), { placeholder: "statement", fontSize: fit(l.bigIdea, 11.2, 3.9, 44, 24, { bold: true, lineHeight: 1.15 }) });
+  }
 
-  chunk(l.takeaways, 6).forEach((group, gi, all) => {
-    slides.push(`
-      <section class="slide takeaways">
-        <div class="content">
-          <div class="eyebrow">Key takeaways${all.length > 1 ? ` · ${gi + 1}/${all.length}` : ""}</div>
-          <h2>What to remember</h2>
-          <div class="grid fit ${group.length <= 2 ? "two" : ""}">
-            ${group.map((t, i) => `<div class="card"><div class="card-num">${pad(gi * all[0].length + i + 1)}</div><p>${rich(t)}</p></div>`).join("")}
-          </div>
-        </div>
-      </section>`);
-  });
-
-  chunk(l.actions, 6).forEach((group, gi, all) => {
-    slides.push(`
-      <section class="slide actions">
-        <div class="content">
-          <div class="eyebrow">Action plan${all.length > 1 ? ` · ${gi + 1}/${all.length}` : ""}</div>
-          <h2>Put it into practice</h2>
-          <ul class="checklist fit">
-            ${group.map((a) => `<li><span class="check">✓</span><span>${rich(a)}</span></li>`).join("")}
-          </ul>
-        </div>
-      </section>`);
-  });
-
-  chunk(l.quotes, 2).forEach((group) => {
-    slides.push(`
-      <section class="slide quotes">
-        <div class="orb orb-b"></div>
-        <div class="content">
-          <div class="eyebrow">Worth quoting</div>
-          <div class="quote-list fit ${group.length === 1 ? "one" : ""}">
-            ${group.map((q) => `<figure><span class="qmark">“</span><p>${rich(q)}</p></figure>`).join("")}
-          </div>
-        </div>
-      </section>`);
-  });
-
-  slides.push(`
-    <section class="slide recap">
-      <div class="orb orb-a"></div>
-      <div class="content">
-        <div class="eyebrow">In one line</div>
-        <p class="recap-line fit">${rich(l.summary || l.bigIdea || l.title)}</p>
-        ${l.tags.length ? `<div class="tags">${l.tags.map((t) => `<span>#${esc(t)}</span>`).join("")}</div>` : ""}
-      </div>
-    </section>`);
-
-  return slides;
-}
-
-function deckHtml(l) {
-  const t = themeFor(l.categorySlug);
-  const slides = slidesFor(l);
-  const footer = (i) =>
-    `<footer><span>${esc(l.book)}${l.author ? ` · ${esc(l.author)}` : ""}</span><span class="brand">Learning Hub</span><span>${i + 1} / ${slides.length}</span></footer>`;
-  const body = slides.map((s, i) => s.replace(/<\/section>\s*$/, `${footer(i)}</section>`)).join("\n");
-
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-${fontFaces()}
-:root{--deep:${t.deep};--mid:${t.mid};--accent:${t.accent};--soft:${t.soft};--ink:#f8fafc;--muted:#cbd5e1}
-@page{size:1280px 720px;margin:0}
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{background:#0b0d12}
-body{font-family:"Inter",system-ui,sans-serif;color:var(--ink);-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.slide{position:relative;width:1280px;height:720px;overflow:hidden;page-break-after:always;break-after:page;
-  background:radial-gradient(1100px 700px at 100% 0%,${rgba(t.mid, 0.55)},${rgba(t.mid, 0)} 60%),
-             radial-gradient(900px 600px at 0% 100%,${rgba(t.mid, 0.3)},${rgba(t.mid, 0)} 60%),
-             linear-gradient(135deg,var(--deep),#07080c 75%)}
-.slide::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:28px 28px;mask-image:linear-gradient(180deg,#000,transparent 70%)}
-.content{position:absolute;inset:72px 96px 96px;display:flex;flex-direction:column;justify-content:center;gap:24px}
-.orb{position:absolute;border-radius:50%;filter:blur(2px);opacity:.55}
-.orb-a{width:520px;height:520px;right:-140px;top:-160px;background:radial-gradient(circle at 30% 30%,var(--accent),${rgba(t.accent, 0)} 65%)}
-.orb-b{width:380px;height:380px;left:-120px;bottom:-140px;background:radial-gradient(circle at 60% 40%,var(--mid),${rgba(t.mid, 0)} 70%)}
-.orb-c{width:700px;height:700px;right:-260px;bottom:-320px;background:radial-gradient(circle,${rgba(t.accent, 0.6)},${rgba(t.accent, 0)} 65%)}
-.pill{align-self:flex-start;padding:8px 18px;border-radius:999px;font-size:16px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--deep);background:var(--accent)}
-.eyebrow{font-size:18px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
-h1{font-size:76px;line-height:1.12;padding-bottom:6px;font-weight:800;letter-spacing:-.03em;max-height:300px;max-width:1000px}
-h2{font-size:48px;line-height:1.1;font-weight:800;letter-spacing:-.02em}
-strong{color:var(--accent);font-weight:700}
-.lead{font-size:26px;line-height:1.45;color:var(--muted);max-width:900px}
-.muted{color:var(--muted);font-size:18px}
-.book{display:flex;align-items:center;gap:16px;margin-top:16px;padding:16px 22px;align-self:flex-start;border-radius:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
-.book-icon{color:var(--accent);display:grid}
-.book-title{font-size:22px;font-weight:700}
-.fit{overflow:hidden}
-blockquote{font-size:56px;line-height:1.2;font-weight:700;letter-spacing:-.02em;max-height:440px;padding-left:36px;border-left:6px solid var(--accent)}
-.concept .num{position:absolute;right:72px;top:40px;font-size:220px;font-weight:800;line-height:1;color:transparent;-webkit-text-stroke:2px ${rgba(t.accent, 0.45)}}
-.concept .fit{display:flex;flex-direction:column;gap:24px;max-height:400px}
-.concept h2{max-width:780px}
-.concept .body{font-size:28px;line-height:1.5;color:#e2e8f0;max-width:840px}
-.example{padding:22px 26px;border-radius:18px;background:${rgba(t.accent, 0.14)};border:1px solid ${rgba(t.accent, 0.4)};max-width:840px}
-.example-label{font-size:14px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
-.example p{font-size:22px;line-height:1.5;color:var(--soft)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-height:440px}
-.card{padding:26px;border-radius:20px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);display:flex;gap:18px;align-items:flex-start}
-.card-num{flex:none;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-weight:800;font-size:17px;color:var(--deep);background:var(--accent)}
-.card p{font-size:22px;line-height:1.45}
-.checklist{list-style:none;display:flex;flex-direction:column;gap:14px;max-height:440px}
-.checklist li{display:flex;gap:18px;align-items:flex-start;font-size:25px;line-height:1.4;padding:16px 22px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
-.check{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:18px;font-weight:800;color:var(--deep);background:var(--accent);margin-top:2px}
-.quote-list{display:flex;flex-direction:column;gap:32px;max-height:460px}
-figure{display:flex;gap:24px;align-items:flex-start}
-.qmark{flex:none;height:64px;overflow:hidden;font-family:Georgia,"DejaVu Serif",serif;font-size:120px;font-weight:700;color:var(--accent);line-height:.85}
-.quote-list.one p{font-size:48px;line-height:1.25}
-figure p{font-size:34px;line-height:1.35;font-weight:600;font-style:italic}
-.recap-line{font-size:54px;line-height:1.2;font-weight:800;letter-spacing:-.02em;max-height:380px;max-width:1040px}
-.tags{display:flex;flex-wrap:wrap;gap:10px}
-.tags span{padding:8px 16px;border-radius:999px;font-size:18px;color:var(--soft);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14)}
-footer{position:absolute;left:96px;right:96px;bottom:36px;display:flex;justify-content:space-between;font-size:15px;color:#94a3b8;border-top:1px solid rgba(255,255,255,.1);padding-top:14px}
-footer .brand{font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:var(--accent)}
-.capture .content,.capture footer{visibility:hidden}
-.slide.baked::before,.slide.baked .orb,.slide.baked .num{display:none}
-</style></head><body>${body}</body></html>`;
-}
-
-// Shrink text in any .fit element until it no longer overflows.
-async function fitText(page) {
-  await page.evaluate(async () => {
-    await document.fonts.ready;
-    for (const el of document.querySelectorAll(".fit")) {
-      const targets = [el, ...el.querySelectorAll("p,li,blockquote")];
-      let scale = 1;
-      while ((el.scrollHeight > el.clientHeight + 4 || el.scrollWidth > el.clientWidth + 4) && scale > 0.45) {
-        scale -= 0.04;
-        for (const t of targets) {
-          if (!t.dataset.base) t.dataset.base = parseFloat(getComputedStyle(t).fontSize);
-          t.style.fontSize = `${t.dataset.base * scale}px`;
-        }
+  // 3. At a glance -----------------------------------------------------
+  const conceptIcon = (c, i) => (ICONS[c.icon] ? c.icon : CONCEPT_ICONS[i % CONCEPT_ICONS.length]);
+  if (l.concepts.length >= 2) {
+    const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Introduction" });
+    s.addText(`${l.concepts.length} IDEAS AT A GLANCE`, { placeholder: "kicker" });
+    s.addText("The ideas in this learning", { placeholder: "title" });
+    const n = l.concepts.length;
+    const cols = n <= 4 ? n : 3;
+    const rows = Math.ceil(n / cols);
+    const gap = 0.3;
+    const cw = (CW - gap * (cols - 1)) / cols;
+    const ch = rows === 1 ? 3.9 : 2.1;
+    for (const [i, c] of l.concepts.entries()) {
+      const x = M + (i % cols) * (cw + gap);
+      const y = TOP + 0.35 + Math.floor(i / cols) * (ch + gap);
+      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y, w: cw, h: ch, rectRadius: 0.15, fill: { color: C.background2 }, line: { type: "none" }, objectName: `card-${i + 1}` });
+      if (rows === 1) {
+        await iconCircle(s, conceptIcon(c, i), x + 0.35, y + 0.4, 0.95);
+        s.addText(pad(i + 1), { x: x + 0.35, y: y + 1.6, w: cw - 0.7, h: 0.35, margin: 0, fontSize: 14, bold: true, color: C.accent1, isTextBox: true, objectName: `card-num-${i + 1}` });
+        s.addText(runs(c.title), { x: x + 0.35, y: y + 2.0, w: cw - 0.7, h: 1.6, margin: 0, fontSize: fit(c.title, cw - 0.7, 1.6, 22, 15, { bold: true }), bold: true, color: C.text1, valign: "top", isTextBox: true, objectName: `card-title-${i + 1}` });
+      } else {
+        await iconCircle(s, conceptIcon(c, i), x + 0.3, y + 0.3, 0.8);
+        s.addText(pad(i + 1), { x: x + 1.3, y: y + 0.3, w: cw - 1.6, h: 0.3, margin: 0, fontSize: 13, bold: true, color: C.accent1, isTextBox: true, objectName: `card-num-${i + 1}` });
+        s.addText(runs(c.title), { x: x + 1.3, y: y + 0.65, w: cw - 1.6, h: ch - 0.95, margin: 0, fontSize: fit(c.title, cw - 1.6, ch - 0.95, 20, 14, { bold: true }), bold: true, color: C.text1, valign: "top", isTextBox: true, objectName: `card-title-${i + 1}` });
       }
     }
-  });
-}
-
-// pdf.js (used by the website viewer) mis-renders Chromium's semi-transparent
-// gradients, so the decorative layer (gradients, orbs, big numbers) is
-// screenshotted per slide and placed back as one JPEG background. Text stays
-// real, selectable and searchable.
-async function bakeBackgrounds(page) {
-  await page.evaluate(() => document.body.classList.add("capture"));
-  const slides = page.locator(".slide");
-  const images = [];
-  for (let i = 0; i < (await slides.count()); i++) {
-    const buf = await slides.nth(i).screenshot({ type: "jpeg", quality: 88 });
-    images.push(`data:image/jpeg;base64,${buf.toString("base64")}`);
   }
-  await page.evaluate((imgs) => {
-    document.querySelectorAll(".slide").forEach((el, i) => {
-      el.style.background = `url(${imgs[i]}) center / cover no-repeat`;
-      el.classList.add("baked");
+
+  // 4. One slide per concept -------------------------------------------
+  pres.addSection({ title: "Concepts" });
+  for (const [i, c] of l.concepts.entries()) {
+    const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Concepts" });
+    s.addText(`CONCEPT ${i + 1} OF ${l.concepts.length}`, { placeholder: "kicker" });
+    s.addText(runs(c.title), { placeholder: "title" });
+    const leftW = 6.7;
+    s.addText(runs(c.explanation, {}, { color: C.accent1 }), {
+      x: M, y: TOP + 0.2, w: leftW, h: 4.2, margin: 0, fontSize: fit(c.explanation, leftW, 4.2, 28, 16, { lineHeight: 1.35 }),
+      color: C.text1, valign: "middle", lineSpacingMultiple: 1.15, isTextBox: true, objectName: "explanation",
     });
-    document.body.classList.remove("capture");
-  }, images);
+    const px = M + leftW + 0.6;
+    const pw = W - M - px;
+    if (c.example) {
+      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: px, y: TOP + 0.2, w: pw, h: 4.2, rectRadius: 0.15, fill: { color: C.accent3 }, line: { type: "none" }, objectName: "example-card" });
+      await iconCircle(s, conceptIcon(c, i), px + 0.4, TOP + 0.6, 0.85);
+      s.addText("IN PRACTICE", { x: px + 0.4, y: TOP + 1.65, w: pw - 0.8, h: 0.3, margin: 0, fontSize: 12, bold: true, charSpacing: 1, color: C.accent1, isTextBox: true, objectName: "example-label" });
+      s.addText(runs(c.example), { x: px + 0.4, y: TOP + 2.05, w: pw - 0.8, h: 2.15, margin: 0, fontSize: fit(c.example, pw - 0.8, 2.15, 20, 14), color: C.text2, valign: "top", isTextBox: true, objectName: "example-text" });
+    } else {
+      const d = 3.2;
+      s.addShape(pres.shapes.OVAL, { x: px + (pw - d) / 2, y: TOP + 0.7, w: d, h: d, fill: { color: C.accent3 }, line: { type: "none" }, objectName: "illustration-ring" });
+      await iconCircle(s, conceptIcon(c, i), px + (pw - 1.9) / 2, TOP + 0.7 + (d - 1.9) / 2, 1.9);
+    }
+  }
+
+  // 5. Takeaways -------------------------------------------------------
+  pres.addSection({ title: "Takeaways and actions" });
+  for (const [gi, group] of chunk(l.takeaways, 6).entries()) {
+    const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Takeaways and actions" });
+    s.addText("KEY TAKEAWAYS", { placeholder: "kicker" });
+    s.addText("What to remember", { placeholder: "title" });
+    const n = group.length;
+    const cols = n === 1 ? 1 : n === 3 || n >= 5 ? 3 : 2;
+    const rows = Math.ceil(n / cols);
+    const gap = 0.3;
+    const cw = (CW - gap * (cols - 1)) / cols;
+    const ch = Math.min(2.0, (BOTTOM - TOP - 0.3 - gap * (rows - 1)) / rows);
+    for (const [i, t] of group.entries()) {
+      const x = M + (i % cols) * (cw + gap);
+      const y = TOP + 0.3 + Math.floor(i / cols) * (ch + gap);
+      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y, w: cw, h: ch, rectRadius: 0.15, fill: { color: C.background1 }, line: { color: C.background2, width: 1 }, shadow: shadow(), objectName: `takeaway-${i + 1}` });
+      await iconCircle(s, "check", x + 0.3, y + 0.32, 0.6, { ratio: 0.45 });
+      s.addText(runs(t, {}, { color: C.accent1 }), { x: x + 1.1, y: y + 0.3, w: cw - 1.4, h: ch - 0.6, margin: 0, fontSize: fit(t, cw - 1.4, ch - 0.6, 22, 14), color: C.text1, valign: "top", isTextBox: true, objectName: `takeaway-text-${i + 1}` });
+    }
+    if (gi === 0) s.addNotes(l.takeaways.map(plain).join("\n"));
+  }
+
+  // 6. Action plan -----------------------------------------------------
+  let step = 0;
+  for (const group of chunk(l.actions, 5)) {
+    const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Takeaways and actions" });
+    s.addText("ACTION PLAN", { placeholder: "kicker" });
+    s.addText("Put it into practice", { placeholder: "title" });
+    const n = group.length;
+    const cw = CW / n;
+    const d = 0.85;
+    const cy = TOP + 0.9;
+    if (n > 1) s.addShape(pres.shapes.LINE, { x: M + cw / 2, y: cy + d / 2, w: cw * (n - 1), h: 0, line: { color: C.accent3, width: 3 }, objectName: "timeline" });
+    for (const [i, a] of group.entries()) {
+      const x = M + i * cw;
+      s.addText(String(++step), {
+        shape: pres.shapes.OVAL, x: x + (cw - d) / 2, y: cy, w: d, h: d, fill: { color: C.accent1 }, line: { color: C.background1, width: 4 },
+        fontSize: 22, bold: true, color: C.background1, align: "center", valign: "middle", margin: 0, objectName: `step-${step}`,
+      });
+      s.addText(runs(a, {}, { color: C.accent1 }), {
+        x: x + 0.15, y: cy + d + 0.35, w: cw - 0.3, h: 2.5, margin: 0, fontSize: fit(a, cw - 0.3, 2.5, 20, 14), color: C.text1,
+        align: "center", valign: "top", isTextBox: true, objectName: `step-text-${step}`,
+      });
+    }
+  }
+
+  // 7. Quotes ----------------------------------------------------------
+  pres.addSection({ title: "Close" });
+  for (const group of chunk(l.quotes, 2)) {
+    const s = pres.addSlide({ masterName: "STATEMENT", sectionTitle: "Close" });
+    await iconCircle(s, "quote", M, 1.4, 0.75, { fill: C.accent2, color: col.dk2 });
+    s.addText("WORTH QUOTING", { placeholder: "kicker" });
+    const text = group.map((q) => `“${plain(q)}”`).join("\n");
+    const size = fit(text, 11.2, 3.9, group.length === 1 ? 40 : 32, 20, { bold: true, lineHeight: 1.6 });
+    s.addText(
+      group.map((q, i) => ({ text: `“${plain(q)}”`, options: { italic: true, breakLine: i < group.length - 1, paraSpaceAfter: 18 } })),
+      { placeholder: "statement", fontSize: size },
+    );
+  }
+
+  // 8. Recap -----------------------------------------------------------
+  {
+    const s = pres.addSlide({ masterName: "STATEMENT", sectionTitle: "Close" });
+    await iconCircle(s, "flag", M, 1.4, 0.75, { fill: C.accent2, color: col.dk2 });
+    s.addText("IN ONE LINE", { placeholder: "kicker" });
+    const line = l.summary || l.bigIdea || l.title;
+    s.addText(runs(line, {}, { color: C.accent2 }), { placeholder: "statement", fontSize: fit(line, 11.2, 2.6, 40, 24, { bold: true, lineHeight: 1.15 }) });
+    let x = M;
+    for (const tag of l.tags.slice(0, 6)) {
+      const w = tag.length * 0.11 + 0.55;
+      s.addText(`#${tag}`, {
+        shape: pres.shapes.ROUNDED_RECTANGLE, rectRadius: 0.18, x, y: 5.45, w, h: 0.42, fill: { color: C.background1, transparency: 88 },
+        line: { color: C.background1, transparency: 70, width: 0.75 }, fontSize: 13, color: C.accent3, align: "center", valign: "middle", margin: 0, objectName: `tag-${tag}`,
+      });
+      x += w + 0.15;
+    }
+  }
+
+  await pres.writeFile({ fileName: file });
+  await applyTheme(file, theme);
 }
 
+// ---------------------------------------------------------------- main
 async function main() {
   const args = process.argv.slice(2);
   const all = args.includes("--all");
@@ -273,25 +396,14 @@ async function main() {
   if (!learnings.length) return console.log("slides: nothing to generate");
 
   fs.mkdirSync(SLIDES_DIR, { recursive: true });
-  const { chromium } = loadPlaywright();
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1.5 });
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "slides-"));
-  try {
-    for (const l of learnings) {
-      const file = path.join(tmp, `${l.slug}.html`);
-      fs.writeFileSync(file, deckHtml(l));
-      await page.goto(pathToFileURL(file).href, { waitUntil: "load" });
-      await fitText(page);
-      await bakeBackgrounds(page);
-      const out = path.join(SLIDES_DIR, `${l.slug}.pdf`);
-      await page.pdf({ path: out, width: "1280px", height: "720px", printBackground: true, preferCSSPageSize: true });
-      console.log(`slides: ${path.relative(ROOT, out)}`);
-    }
-  } finally {
-    await browser.close();
-    fs.rmSync(tmp, { recursive: true, force: true });
+  const decks = [];
+  for (const l of learnings) {
+    const file = path.join(SLIDES_DIR, `${l.slug}.pptx`);
+    await buildDeck(l, file);
+    decks.push(file);
+    console.log(`slides: ${path.relative(ROOT, file)}`);
   }
+  for (const pdf of pptxToPdf(decks)) console.log(`slides: ${path.relative(ROOT, pdf)}`);
 }
 
 main().catch((err) => {

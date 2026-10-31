@@ -79,7 +79,7 @@ export default async function LearningPage({ params }: Props) {
       {l.pdf && (
         <Section title="Slide deck">
           <div className="overflow-hidden rounded-2xl border border-[var(--border)] shadow-lg">
-            <SlideViewer pdf={l.pdf} title={l.title} />
+            <SlideViewer pdf={l.pdf} pptx={l.pptx} title={l.title} />
           </div>
         </Section>
       )}

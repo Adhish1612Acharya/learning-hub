@@ -7,3 +7,4 @@ next-env.d.ts
 # generated at build time by scripts/build-index.mjs
 public/search-index.json
 public/pdf.worker.min.mjs
+.preview/

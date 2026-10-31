@@ -13,6 +13,9 @@ concepts:
   - title: "Concept name"
     explanation: "What it means, in plain words."
     example: "A concrete example or how it applies to my life."   # optional
+    icon: idea              # optional: idea brain graduation chess money coins chart growth shield rocket
+                            #   target seedling key compass clock people heart flag scale handshake
+                            #   briefcase mountain puzzle fire eye book
 takeaways:
   - "Thing worth remembering"
 actions:
