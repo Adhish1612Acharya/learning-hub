@@ -31,8 +31,11 @@ function loadPlaywright() {
 
 const esc = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-// Escape, then allow **bold** for emphasis.
-const rich = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+// Escape, then allow **bold** and *italic* for emphasis.
+const rich = (s) =>
+  esc(s)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>");
 // Split into the fewest groups of at most `max`, keeping group sizes even.
 const chunk = (arr, max) => {
   const n = Math.ceil(arr.length / Math.ceil(arr.length / max));

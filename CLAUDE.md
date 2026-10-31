@@ -22,7 +22,7 @@ The owner explains a learning in their own words. Turn it into a structured entr
    - Body under `## In my words`: the owner's explanation, lightly cleaned (fix grammar, keep their voice and
      meaning — don't add ideas they didn't say). Add `## Why it matters to me` only if they shared that.
    - Don't invent facts about the book. If something they said seems off, keep their version and ask.
-   - `**bold**` works inside frontmatter strings for emphasis on slides and the page.
+   - `**bold**` and `*italic*` work inside frontmatter strings (slides and the page).
    - One file per distinct learning. Several learnings from one explanation → several files, same `book`.
 3. **Generate the deck**: `npm run slides -- <slug>` → `public/slides/<slug>.pdf`.
    Check it visually: `pdftoppm -r 40 -png public/slides/<slug>.pdf <scratch>/s` and view the images.
