@@ -88,14 +88,14 @@ async function main() {
     add(l, {
       source: "note",
       heading: "Summary",
-      text: [l.summary, l.bigIdea].filter(Boolean).join(" — "),
+      text: plain([l.summary, l.bigIdea].filter(Boolean).join(" — ")),
     });
     l.concepts.forEach((c) =>
-      add(l, { source: "note", heading: c.title, text: [c.explanation, c.example].filter(Boolean).join(" Example: ") }),
+      add(l, { source: "note", heading: plain(c.title), text: plain([c.explanation, c.example].filter(Boolean).join(" Example: ")) }),
     );
-    if (l.takeaways.length) add(l, { source: "note", heading: "Key takeaways", text: l.takeaways.join(" • ") });
-    if (l.actions.length) add(l, { source: "note", heading: "Action plan", text: l.actions.join(" • ") });
-    if (l.quotes.length) add(l, { source: "note", heading: "Quotes", text: l.quotes.join(" • ") });
+    if (l.takeaways.length) add(l, { source: "note", heading: "Key takeaways", text: plain(l.takeaways.join(" • ")) });
+    if (l.actions.length) add(l, { source: "note", heading: "Action plan", text: plain(l.actions.join(" • ")) });
+    if (l.quotes.length) add(l, { source: "note", heading: "Quotes", text: plain(l.quotes.join(" • ")) });
     for (const s of bodySections(l.body)) add(l, { source: "note", ...s });
   }
 
