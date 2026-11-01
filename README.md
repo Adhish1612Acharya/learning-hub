@@ -31,5 +31,7 @@ npm run build                       # static site in out/
 ## Deploy
 
 `.github/workflows/deploy.yml` publishes to GitHub Pages on every push to `main`
-(enable it once in *Settings → Pages → Source: GitHub Actions*). Any static host
-(Vercel, Netlify, Cloudflare Pages) also works with `npm run build` and output dir `out`.
+(enable it once in *Settings → Pages → Source: GitHub Actions*).
+
+**Vercel:** import the repo; `vercel.json` sets it up (static build, `npm run build`, output dir `out`).
+Other static hosts (Netlify, Cloudflare Pages) work with the same build command and output dir.
