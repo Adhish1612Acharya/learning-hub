@@ -1,0 +1,56 @@
+{
+  "goal": {
+    "title": "Finish the reading list by 6 December",
+    "deadline": "2026-12-06"
+  },
+  "items": [
+    {
+      "type": "book",
+      "title": "Rich Dad Poor Dad",
+      "author": "Robert T. Kiyosaki",
+      "category": "Finance",
+      "status": "completed",
+      "finished": "2026-11-02",
+      "note": "Notes from earlier chapters will be added from the summary over the coming days."
+    },
+    {
+      "type": "book",
+      "title": "How to Win Friends and Influence People",
+      "author": "Dale Carnegie",
+      "category": "Self-Help",
+      "start": "2026-11-02",
+      "end": "2026-11-15",
+      "note": "Bought."
+    },
+    {
+      "type": "book",
+      "title": "The Mom Test",
+      "author": "Rob Fitzpatrick",
+      "category": "Startups",
+      "start": "2026-11-16",
+      "end": "2026-11-18"
+    },
+    {
+      "type": "action",
+      "title": "Action gap: message users",
+      "start": "2026-11-19",
+      "end": "2026-11-20"
+    },
+    {
+      "type": "book",
+      "title": "Cashflow Quadrant",
+      "author": "Robert T. Kiyosaki",
+      "category": "Finance",
+      "start": "2026-11-21",
+      "end": "2026-11-29"
+    },
+    {
+      "type": "book",
+      "title": "Before You Quit Your Job",
+      "author": "Robert T. Kiyosaki",
+      "category": "Startups",
+      "start": "2026-11-30",
+      "end": "2026-12-06"
+    }
+  ]
+}

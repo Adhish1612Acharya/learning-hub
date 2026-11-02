@@ -3,6 +3,10 @@ export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 export const asset = (p: string) => `${BASE_PATH}${p}`;
 
+export function formatShort(iso: string) {
+  return iso ? new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
+}
+
 export function formatDate(iso: string) {
   if (!iso) return "";
   const d = new Date(`${iso}T00:00:00`);

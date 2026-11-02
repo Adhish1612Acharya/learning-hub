@@ -10,11 +10,14 @@ There are two kinds of requests. Handle each as below.
 
 The owner explains a learning in their own words. Turn it into a structured entry plus a slide deck.
 
-1. **Ask for the book first** if it isn't stated — use AskUserQuestion. Needed: book title (exact),
-   author, and category. Offer existing books/categories as options so names stay consistent
-   (`ls content/learnings`, or `grep -h "^book:\|^category:" content/learnings/*.md | sort -u`).
-   Categories with built-in colour themes: Finance, Startups, Self-Help, Psychology, Productivity, Business.
-   Any other category works too (it gets a fallback colour).
+1. **Ask which book it's from** unless the message names it — use AskUserQuestion. Build the options
+   from `content/reading-plan.json`: the book scheduled for today first (marked Recommended), then the
+   next one and the most recently finished one. The owner also adds notes from books finished before the
+   hub existed (e.g. from summaries), so a finished book is a normal answer.
+   Take `book`, `author` and `category` **exactly** from the plan entry so learnings group under the
+   right book. For a book not in the plan, ask for title, author and category (themes exist for Finance,
+   Startups, Self-Help, Psychology, Productivity, Business; others get a fallback colour) and add it
+   to the plan.
 2. **Create** `content/learnings/<YYYY-MM-DD>-<short-slug>.md` following `content/learnings/_template.md`:
    - `title`: short and memorable. `summary`: one sentence. `bigIdea`: the core insight as a strong statement.
    - `concepts`: each idea explained plainly, with an `example` when the owner gave one (or an obvious real-life one).
@@ -33,6 +36,17 @@ The owner explains a learning in their own words. Turn it into a structured entr
 4. **Verify**: `npm run build` must pass.
 5. **Commit and push** (note + PPTX + PDF together) on the working branch.
 6. Reply with a short summary of how the learning was structured.
+
+## Reading plan
+
+`content/reading-plan.json` is the owner's reading list, in order: `goal` (title + deadline) and `items`.
+Each item is a `book` (title, author, category, `start`/`end` dates, optional `note`) or an `action`
+block with no reading (e.g. "message users"). The site shows it as a timeline on `/books` and a
+"Reading now" card on the home page; "now / up next / done" are worked out in the browser from today's date.
+
+- When the owner says they finished a book: set `"status": "completed"` and `"finished": "<date>"`.
+- New books, reordering or new dates: edit the items; keep dates as `YYYY-MM-DD`.
+- Every plan book gets a `/books/<slug>` page even before it has learnings.
 
 ## 2. "What did I learn about X?" → answer from the hub
 
@@ -57,6 +71,7 @@ The owner explains a learning in their own words. Turn it into a structured entr
 ## Layout
 
 - `content/learnings/*.md` — the learnings (files starting with `_` are ignored).
+- `content/reading-plan.json` — reading list with dates and status (see Reading plan).
 - `public/slides/*.pptx|*.pdf` — generated decks, committed. Any other PDF dropped here is also indexed for search.
 - `lib/content.mjs` — loads/parses learnings (shared by the site and scripts).
 - `lib/search.mjs` — MiniSearch config, grouping and snippets (shared by the site and `npm run ask`).
@@ -66,4 +81,5 @@ The owner explains a learning in their own words. Turn it into a structured entr
   ideas at a glance, one per concept, takeaways, action plan, quotes, recap. Icons come from react-icons (fa6).
 - `scripts/pptx-to-pdf.mjs` — LibreOffice headless conversion (set `SOFFICE` if the binary isn't on PATH).
 - `scripts/build-index.mjs` — builds the search index; drops repeated slide footers from PDF text.
-- `app/` — pages: `/` (search + filters), `/learnings/[slug]`, `/books`, `/books/[slug]`.
+- `components/ReadingPlan.tsx` — reading plan timeline and the home page "Reading now" card.
+- `app/` — pages: `/` (search + filters), `/learnings/[slug]`, `/books` (reading plan + all books), `/books/[slug]`.
